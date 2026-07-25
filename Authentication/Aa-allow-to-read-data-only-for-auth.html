@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Supabase Auth Demo</title>
   
-  <!-- Tailwind CSS for styling -->
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Supabase JS Client (v2) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -16,7 +16,7 @@
     
     <!-- Header -->
     <h1 class="text-2xl font-bold text-slate-100 mb-1">Welcome</h1>
-    <p class="text-sm text-slate-400 mb-6">Enter your details to log in or create an account.</p>
+    <p class="text-sm text-slate-400 mb-6">Enter username & password to log in or create an account.</p>
 
     <!-- Error/Status Message Box -->
     <div id="message-box" class="hidden text-sm p-3 rounded-lg mb-4 border"></div>
@@ -54,7 +54,7 @@
       </button>
     </form>
 
-    <!-- Protected User Data Section (Shown after Auth) -->
+    <!-- Protected User Data Section -->
     <div id="data-section" class="hidden mt-6 pt-6 border-t border-slate-700 space-y-4">
       <div class="flex justify-between items-center">
         <div>
@@ -65,7 +65,7 @@
       </div>
 
       <div class="bg-slate-900 p-4 rounded-lg border border-slate-700">
-        <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Your Protected Data (RLS)</h3>
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Your Data (RLS Protected)</h3>
         <div id="notes-list" class="text-sm text-slate-300 space-y-2">Loading...</div>
       </div>
     </div>
@@ -74,10 +74,11 @@
 
   <script>
     // ==========================================
-    // 1. SUPABASE INITIALIZATION
+    // 1. YOUR CREDENTIALS & TABLE CONFIG
     // ==========================================
     const SUPABASE_URL = "https://fikrouualswwigrptgha.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZpa3JvdXVhbHN3d2lncnB0Z2hhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0NDgzNjgsImV4cCI6MjEwMDAyNDM2OH0.0-HB7sknxCiQWl72uz723zl2y9LMa7UaSSm3DqOmaL0";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZpa3JvdXVhbHN3d2lncnB0Z2hhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0NDgzNjgsImV4cCI6MjEwMDAyNDM2OH0.0-HB7sknxCiQWl72uz723zl2y9LMa7UaSSm3DqOmaL0"; 
+    const SUPABASE_TABLE = "user_notes";
 
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -92,19 +93,28 @@
     const logoutBtn = document.getElementById("logout-btn");
     const notesList = document.getElementById("notes-list");
 
-    // Helper: Map username to synthetic email
     const usernameToEmail = (username) => `${username.trim().toLowerCase()}@myapp.internal`;
 
-    // Helper: UI Feedback
     function showMessage(text, isError = false) {
       messageBox.textContent = text;
+      messageBox.classList.remove("hidden");
       messageBox.className = isError 
         ? "text-sm p-3 rounded-lg mb-4 border bg-red-950/50 text-red-300 border-red-800" 
         : "text-sm p-3 rounded-lg mb-4 border bg-emerald-950/50 text-emerald-300 border-emerald-800";
     }
 
+    // Check for existing active session on page load
+    async function checkExistingSession() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        const username = session.user.user_metadata?.username || session.user.email.split('@')[0];
+        onAuthSuccess(session.user, username);
+      }
+    }
+    checkExistingSession();
+
     // ==========================================
-    // 2. AUTHENTICATION & AUTO-SIGNUP LOGIC
+    // 2. AUTH LOGIC (LOGIN / AUTO-CREATE)
     // ==========================================
     authForm.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -118,36 +128,51 @@
       messageBox.classList.add("hidden");
 
       try {
-        // Step A: Attempt Login
-        let { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
+        // Step 1: Try signing in first
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
           email: email,
           password: password,
         });
 
-        // Step B: If credentials fail, determine whether user doesn't exist or password was wrong
-        if (loginError) {
-          if (loginError.message.includes("Invalid login credentials")) {
-            
-            // Try signing up. If the account ALREADY exists, Supabase sign-up returns an empty user/identities array or throws an error.
-            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-              email: email,
-              password: password,
-              options: { data: { username: username } }
-            });
+        if (!signInError && signInData.user) {
+          showMessage("Welcome back!");
+          onAuthSuccess(signInData.user, username);
+          return;
+        }
 
-            // Check if user actually got created or if account exists with wrong password
-            if (signUpError || (signUpData.user && signUpData.user.identities && signUpData.user.identities.length === 0)) {
-              showMessage("Incorrect password for existing user.", true);
-            } else {
-              showMessage("New account created and logged in!");
-              onAuthSuccess(signUpData.user, username);
-            }
-          } else {
-            showMessage(loginError.message, true);
+        // Step 2: Handle sign-in failure
+        if (signInError.message.includes("Invalid login credentials")) {
+          // Attempt sign-up for new user
+          const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+            email: email,
+            password: password,
+            options: { data: { username: username } }
+          });
+
+          if (signUpError) {
+            showMessage(signUpError.message, true);
+            return;
+          }
+
+          // Case A: User existed, but password entered was wrong
+          if (signUpData.user && signUpData.user.identities && signUpData.user.identities.length === 0) {
+            showMessage("Incorrect password for existing username.", true);
+            return;
+          }
+
+          // Case B: User created, but Supabase requires Email Confirmation
+          if (signUpData.user && !signUpData.session) {
+            showMessage("Account created! BUT 'Confirm Email' is ON in Supabase Dashboard. Disable it in Auth Settings to allow instant login.", true);
+            return;
+          }
+
+          // Case C: Successfully created & logged in instantly
+          if (signUpData.session) {
+            showMessage("New account created and logged in!");
+            onAuthSuccess(signUpData.user, username);
           }
         } else {
-          showMessage("Welcome back!");
-          onAuthSuccess(loginData.user, username);
+          showMessage(signInError.message, true);
         }
 
       } catch (err) {
@@ -159,37 +184,46 @@
     });
 
     // ==========================================
-    // 3. FETCH USER DATA (PROTECTED BY RLS)
+    // 3. FETCH & CREATE DATA WITH RLS
     // ==========================================
     async function onAuthSuccess(user, username) {
       userDisplay.textContent = username;
       dataSection.classList.remove("hidden");
-      
-      // Fetch notes for this user
       fetchUserNotes();
     }
 
     async function fetchUserNotes() {
-      notesList.innerText = "Querying database...";
+      notesList.innerText = "Fetching your data...";
 
-      // Query table protected by auth.uid() = user_id
-      const { data, error } = await supabase.from("user_notes").select("*");
+      const { data, error } = await supabase
+        .from(SUPABASE_TABLE)
+        .select("*");
 
       if (error) {
-        notesList.innerText = `Error: ${error.message}`;
+        notesList.innerHTML = `<span class="text-red-400">Database Error: ${error.message}</span>`;
       } else if (!data || data.length === 0) {
-        notesList.innerText = "No notes found. Creating initial record...";
+        notesList.innerText = "No data yet. Creating initial record...";
         createInitialData();
       } else {
-        notesList.innerHTML = data.map(item => `<div class="p-2 bg-slate-800 rounded border border-slate-700">• ${item.content}</div>`).join("");
+        notesList.innerHTML = data.map(item => `
+          <div class="p-2 bg-slate-800 rounded border border-slate-700 flex justify-between">
+            <span>${item.content}</span>
+            <span class="text-xs text-slate-500">${new Date(item.created_at).toLocaleTimeString()}</span>
+          </div>
+        `).join("");
       }
     }
 
     async function createInitialData() {
-      const { error } = await supabase.from("user_notes").insert([
-        { content: "This is your personal private data protected by RLS." }
+      const { error } = await supabase.from(SUPABASE_TABLE).insert([
+        { content: "Welcome! This row was created automatically for your user." }
       ]);
-      if (!error) fetchUserNotes();
+      
+      if (error) {
+        notesList.innerHTML = `<span class="text-red-400">Error creating data: ${error.message}</span>`;
+      } else {
+        fetchUserNotes();
+      }
     }
 
     // Log Out
@@ -202,4 +236,4 @@
     });
   </script>
 </body>
-  </html>
+</html>
