@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Supabase Auth Demo</title>
+  
+  <!-- Tailwind CSS for styling -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Supabase JS Client (v2) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center p-4">
+
+  <div class="w-full max-w-md bg-slate-800 border border-slate-700 rounded-xl p-6 shadow-2xl">
+    
+    <!-- Header -->
+    <h1 class="text-2xl font-bold text-slate-100 mb-1">Welcome</h1>
+    <p class="text-sm text-slate-400 mb-6">Enter your details to log in or create an account.</p>
+
+    <!-- Error/Status Message Box -->
+    <div id="message-box" class="hidden text-sm p-3 rounded-lg mb-4 border"></div>
+
+    <!-- Login/Signup Form -->
+    <form id="auth-form" class="space-y-4">
+      <div>
+        <label for="username" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Username</label>
+        <input 
+          type="text" 
+          id="username" 
+          required 
+          placeholder="johndoe"
+          class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500 transition-colors"
+        />
+      </div>
+
+      <div>
+        <label for="password" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Password</label>
+        <input 
+          type="password" 
+          id="password" 
+          required 
+          placeholder="••••••••"
+          class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500 transition-colors"
+        />
+      </div>
+
+      <button 
+        type="submit" 
+        id="submit-btn"
+        class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2 rounded-lg transition-colors flex items-center justify-center gap-2"
+      >
+        <span>Continue</span>
+      </button>
+    </form>
+
+    <!-- Protected User Data Section (Shown after Auth) -->
+    <div id="data-section" class="hidden mt-6 pt-6 border-t border-slate-700 space-y-4">
+      <div class="flex justify-between items-center">
+        <div>
+          <span class="text-xs text-slate-400 block">Logged in as</span>
+          <span id="user-display" class="font-bold text-indigo-400"></span>
+        </div>
+        <button id="logout-btn" class="text-xs text-red-400 hover:underline">Log out</button>
+      </div>
+
+      <div class="bg-slate-900 p-4 rounded-lg border border-slate-700">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Your Protected Data (RLS)</h3>
+        <div id="notes-list" class="text-sm text-slate-300 space-y-2">Loading...</div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ==========================================
+    // 1. SUPABASE INITIALIZATION
+    // ==========================================
+    const SUPABASE_URL = "https://YOUR_SUPABASE_PROJECT_ID.supabase.co";
+    const SUPABASE_ANON_KEY = "YOUR_SUPABASE_PUBLISHABLE_KEY";
+
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // DOM Elements
+    const authForm = document.getElementById("auth-form");
+    const usernameInput = document.getElementById("username");
+    const passwordInput = document.getElementById("password");
+    const submitBtn = document.getElementById("submit-btn");
+    const messageBox = document.getElementById("message-box");
+    const dataSection = document.getElementById("data-section");
+    const userDisplay = document.getElementById("user-display");
+    const logoutBtn = document.getElementById("logout-btn");
+    const notesList = document.getElementById("notes-list");
+
+    // Helper: Map username to synthetic email
+    const usernameToEmail = (username) => `${username.trim().toLowerCase()}@myapp.internal`;
+
+    // Helper: UI Feedback
+    function showMessage(text, isError = false) {
+      messageBox.textContent = text;
+      messageBox.className = isError 
+        ? "text-sm p-3 rounded-lg mb-4 border bg-red-950/50 text-red-300 border-red-800" 
+        : "text-sm p-3 rounded-lg mb-4 border bg-emerald-950/50 text-emerald-300 border-emerald-800";
+    }
+
+    // ==========================================
+    // 2. AUTHENTICATION & AUTO-SIGNUP LOGIC
+    // ==========================================
+    authForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      
+      const username = usernameInput.value;
+      const password = passwordInput.value;
+      const email = usernameToEmail(username);
+
+      submitBtn.disabled = true;
+      submitBtn.innerText = "Processing...";
+      messageBox.classList.add("hidden");
+
+      try {
+        // Step A: Attempt Login
+        let { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
+          email: email,
+          password: password,
+        });
+
+        // Step B: If credentials fail, determine whether user doesn't exist or password was wrong
+        if (loginError) {
+          if (loginError.message.includes("Invalid login credentials")) {
+            
+            // Try signing up. If the account ALREADY exists, Supabase sign-up returns an empty user/identities array or throws an error.
+            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+              email: email,
+              password: password,
+              options: { data: { username: username } }
+            });
+
+            // Check if user actually got created or if account exists with wrong password
+            if (signUpError || (signUpData.user && signUpData.user.identities && signUpData.user.identities.length === 0)) {
+              showMessage("Incorrect password for existing user.", true);
+            } else {
+              showMessage("New account created and logged in!");
+              onAuthSuccess(signUpData.user, username);
+            }
+          } else {
+            showMessage(loginError.message, true);
+          }
+        } else {
+          showMessage("Welcome back!");
+          onAuthSuccess(loginData.user, username);
+        }
+
+      } catch (err) {
+        showMessage(err.message || "An unexpected error occurred.", true);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerText = "Continue";
+      }
+    });
+
+    // ==========================================
+    // 3. FETCH USER DATA (PROTECTED BY RLS)
+    // ==========================================
+    async function onAuthSuccess(user, username) {
+      userDisplay.textContent = username;
+      dataSection.classList.remove("hidden");
+      
+      // Fetch notes for this user
+      fetchUserNotes();
+    }
+
+    async function fetchUserNotes() {
+      notesList.innerText = "Querying database...";
+
+      // Query table protected by auth.uid() = user_id
+      const { data, error } = await supabase.from("user_notes").select("*");
+
+      if (error) {
+        notesList.innerText = `Error: ${error.message}`;
+      } else if (!data || data.length === 0) {
+        notesList.innerText = "No notes found. Creating initial record...";
+        createInitialData();
+      } else {
+        notesList.innerHTML = data.map(item => `<div class="p-2 bg-slate-800 rounded border border-slate-700">• ${item.content}</div>`).join("");
+      }
+    }
+
+    async function createInitialData() {
+      const { error } = await supabase.from("user_notes").insert([
+        { content: "This is your personal private data protected by RLS." }
+      ]);
+      if (!error) fetchUserNotes();
+    }
+
+    // Log Out
+    logoutBtn.addEventListener("click", async () => {
+      await supabase.auth.signOut();
+      dataSection.classList.add("hidden");
+      messageBox.classList.add("hidden");
+      usernameInput.value = "";
+      passwordInput.value = "";
+    });
+  </script>
+</body>
+  </html>
