@@ -2,79 +2,106 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Step by Step Test</title>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <title>Supabase Debugger</title>
+  <!-- Alternative Unpkg CDN link -->
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 </head>
-<body style="font-family: sans-serif; padding: 20px; background: #111; color: #fff;">
+<body style="font-family: sans-serif; padding: 20px; background: #0f172a; color: #f8fafc;">
 
   <h2>Supabase Step-by-Step Tester</h2>
   
-  <div style="margin-bottom: 10px;">
-    <input id="uname" placeholder="Username" style="padding: 8px;">
-    <input id="pwd" type="password" placeholder="Password" style="padding: 8px;">
-    <button onclick="testFlow()" style="padding: 8px 16px;">Test Login/Register</button>
+  <div style="margin-bottom: 15px;">
+    <input id="uname" placeholder="Username (e.g. alex)" style="padding: 10px; border-radius: 5px; border: 1px solid #334155; background: #1e293b; color: white;">
+    <input id="pwd" type="password" placeholder="Password" style="padding: 10px; border-radius: 5px; border: 1px solid #334155; background: #1e293b; color: white;">
+    <button id="test-btn" style="padding: 10px 20px; background: #6366f1; color: white; border: none; border-radius: 5px; cursor: pointer;">Test Login/Register</button>
   </div>
 
-  <div id="output" style="background: #222; padding: 15px; border-radius: 5px; font-family: monospace; white-space: pre-wrap;">Awaiting action...</div>
+  <div id="output" style="background: #1e293b; padding: 15px; border-radius: 5px; font-family: monospace; white-space: pre-wrap; border: 1px solid #334155; min-height: 150px;">Waiting for user click...</div>
 
   <script>
+    // Global Error Catching to show errors directly on page
+    window.onerror = function(msg, url, line) {
+      document.getElementById('output').innerText += `\n❌ Global JS Error: ${msg} (Line ${line})`;
+    };
+
     const SUPABASE_URL = "https://fikrouualswwigrptgha.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZpa3JvdXVhbHN3d2lncnB0Z2hhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0NDgzNjgsImV4cCI6MjEwMDAyNDM2OH0.0-HB7sknxCiQWl72uz723zl2y9LMa7UaSSm3DqOmaL0";
     
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    const log = (msg) => document.getElementById('output').innerText += "\n" + msg;
+    let supabase;
+    const output = document.getElementById('output');
+    const log = (msg) => { output.innerText += "\n" + msg; };
 
-    async function testFlow() {
-      document.getElementById('output').innerText = "Starting test...";
+    // Check if Supabase JS SDK loaded properly
+    if (typeof window.supabase === 'undefined') {
+      output.innerText = "❌ ERROR: The Supabase script failed to load from CDN. Check your internet connection or ad-blocker.";
+    } else {
+      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      output.innerText = "✅ Supabase SDK loaded. Enter a username and password above and click Test.";
+    }
+
+    document.getElementById('test-btn').addEventListener('click', async () => {
+      output.innerText = "Starting test...";
+      
       const u = document.getElementById('uname').value.trim();
       const p = document.getElementById('pwd').value;
-      const email = `${u.toLowerCase()}@myapp.internal`;
 
-      if (!u || !p) return log("Error: Enter username and password.");
-
-      // 1. Try Login
-      log(`Attempting login for: ${email}`);
-      let { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({ email, password: p });
-
-      if (loginError) {
-        log(`Login failed (${loginError.message}). Attempting sign-up...`);
-        
-        // 2. Try Signup
-        let { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password: p });
-
-        if (signUpError) {
-          log(`SignUp Error: ${signUpError.message}`);
-          return;
-        }
-
-        if (signUpData.user && signUpData.user.identities && signUpData.user.identities.length === 0) {
-          log(`❌ ERROR: User already exists, but password was INCORRECT.`);
-          return;
-        }
-
-        if (signUpData.user && !signUpData.session) {
-          log(`⚠️ WARNING: Account created, but email confirmation is ON in Dashboard.`);
-          return;
-        }
-
-        log(`✅ NEW USER CREATED & LOGGED IN! User ID: ${signUpData.user.id}`);
-      } else {
-        log(`✅ LOGGED IN SUCCESSFULLY! User ID: ${loginData.user.id}`);
+      if (!u || !p) {
+        log("❌ Error: Please enter both a username and password.");
+        return;
       }
 
-      // 3. Test Database Read/Write
-      log("Testing database endpoint /rest/v1/user_notes...");
-      
-      // Try Insert
-      const { error: insertErr } = await supabase.from('user_notes').insert([{ content: `Test note created at ${new Date().toLocaleTimeString()}` }]);
-      if (insertErr) log(`Insert Error: ${insertErr.message}`);
-      else log("✅ Successfully inserted row into user_notes");
+      const email = `${u.toLowerCase()}@myapp.internal`;
 
-      // Try Select
-      const { data: notes, error: selectErr } = await supabase.from('user_notes').select('*');
-      if (selectErr) log(`Select Error: ${selectErr.message}`);
-      else log(`✅ Successfully fetched ${notes.length} note(s): ` + JSON.stringify(notes, null, 2));
-    }
+      try {
+        log(`1. Attempting login for: ${email}`);
+        let { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({ email, password: p });
+
+        if (loginError) {
+          log(`Login failed (${loginError.message}). Attempting sign-up...`);
+          
+          let { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password: p });
+
+          if (signUpError) {
+            log(`❌ SignUp Error: ${signUpError.message}`);
+            return;
+          }
+
+          if (signUpData.user && signUpData.user.identities && signUpData.user.identities.length === 0) {
+            log(`❌ ERROR: Username exists, but password was INCORRECT.`);
+            return;
+          }
+
+          if (signUpData.user && !signUpData.session) {
+            log(`⚠️ WARNING: Account created, but email confirmation is enabled in your Supabase Dashboard.`);
+            return;
+          }
+
+          log(`✅ NEW USER CREATED & LOGGED IN! ID: ${signUpData.user.id}`);
+        } else {
+          log(`✅ LOGGED IN SUCCESSFULLY! ID: ${loginData.user.id}`);
+        }
+
+        // Database test
+        log("2. Testing table 'user_notes'...");
+        const { error: insertErr } = await supabase.from('user_notes').insert([{ content: `Test note at ${new Date().toLocaleTimeString()}` }]);
+        
+        if (insertErr) {
+          log(`❌ Insert Error: ${insertErr.message}`);
+        } else {
+          log("✅ Inserted test row!");
+        }
+
+        const { data: notes, error: selectErr } = await supabase.from('user_notes').select('*');
+        if (selectErr) {
+          log(`❌ Select Error: ${selectErr.message}`);
+        } else {
+          log(`✅ Fetched notes: ` + JSON.stringify(notes, null, 2));
+        }
+
+      } catch (err) {
+        log(`❌ Exception caught: ${err.message}`);
+      }
+    });
   </script>
 </body>
 </html>
